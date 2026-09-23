@@ -5,6 +5,8 @@ export interface SendEmailPayload {
   email: string;
   name: string;
   role: 'admin' | 'staff' | 'customer';
+  otp?: string;            // 6-digit verification code (sent for registration)
+  otpExpiresInMin?: number;
 }
 
 export const BREVO_CONFIG = {
@@ -33,6 +35,12 @@ export async function sendBrevoWelcomeEmail(payload: SendEmailPayload): Promise<
           Your account has been successfully registered on the Kaal Vastr platform with the role of 
           <strong style="color: #10B981; text-transform: uppercase;">${payload.role}</strong>.
         </p>
+        ${payload.otp ? `
+        <div style="background-color: #052E22; border: 1px solid #10B981; padding: 18px; border-radius: 6px; margin: 16px 0; text-align: center;">
+          <p style="margin: 0 0 8px 0; font-size: 11px; color: #6EE7B7; letter-spacing: 2px; text-transform: uppercase;">One-Time VERIFICATION CODE</p>
+          <p style="margin: 0; font-family: 'Courier New', monospace; font-size: 38px; font-weight: 700; letter-spacing: 12px; color: #FFFFFF;">${payload.otp}</p>
+          <p style="margin: 10px 0 0 0; font-size: 11px; color: #A1A1AA;">Enter this code on the registration screen to verify your account (valid for ${payload.otpExpiresInMin ?? 10} minutes).</p>
+        </div>` : ''}
         <div style="background-color: #141416; border: 1px solid #27272A; padding: 15px; border-radius: 6px; margin: 20px 0;">
           <p style="margin: 0; font-size: 12px; color: #A1A1AA;"><strong>Registered Email:</strong> ${payload.email}</p>
           <p style="margin: 5px 0 0 0; font-size: 12px; color: #A1A1AA;"><strong>SMTP Relay Node:</strong> ${BREVO_CONFIG.host}:${BREVO_CONFIG.port}</p>

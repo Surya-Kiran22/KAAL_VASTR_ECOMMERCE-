@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { sendBrevoWelcomeEmail } from '../lib/brevoSmtp';
+import { issueOtp, verifyOtp } from '../lib/otpEngine';
 import { globalLoadBalancer } from '../lib/loadBalancerThrottler';
 
 interface RegisterParams {
@@ -17,7 +18,8 @@ interface AuthContextType {
   isAdmin: boolean;
   loading: boolean;
   loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
-  registerUser: (params: RegisterParams) => Promise<{ success: boolean; error?: string }>;
+  registerUser: (params: RegisterParams) => Promise<{ success: boolean; error?: string; requiresOtp?: boolean; email?: string }>;
+  verifyRegistrationOtp: (email: string, code: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
 }
 
@@ -130,15 +132,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return { success: false, error: error.message };
           }
 
-          // Trigger Brevo SMTP transactional confirmation email
-          await sendBrevoWelcomeEmail({ email, name, role });
-
-          if (data.user) {
-            setUser(data.user);
-            setIsAdmin(role === 'admin');
-            localStorage.setItem(LOCAL_ADMIN_KEY, role === 'admin' ? 'true' : 'false');
-            return { success: true };
-          }
+          // Issue 6-digit OTP + email it — NO auto-login (auto-login on an
+          // unconfirmed Supabase account is what caused the grant_type=password 400 flood)
+          const { code } = issueOtp(email);
+          await sendBrevoWelcomeEmail({ email, name, role, otp: code, otpExpiresInMin: 10 });
+          return { success: true, requiresOtp: true, email };
         } catch (err: any) {
           return { success: false, error: err.message || 'Registration failed' };
         }
@@ -151,15 +149,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try { registeredUsers = JSON.parse(storedUsersRaw); } catch {}
       }
 
-      registeredUsers.push({ email, pass, name, role, created_at: new Date().toISOString() });
-      localStorage.setItem(LOCAL_USER_STORE, JSON.stringify(registeredUsers));
+      try {
+        let registeredUsers: any[] = [];
+        const storedUsersRaw = localStorage.getItem(LOCAL_USER_STORE);
+        if (storedUsersRaw) {
+          try { registeredUsers = JSON.parse(storedUsersRaw); } catch {}
+        }
 
-      // Dispatch Brevo welcome email
-      await sendBrevoWelcomeEmail({ email, name, role });
+        const existing = registeredUsers.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
+        if (existing) {
+          const updated = registeredUsers.map((u: any) => u.email?.toLowerCase() === email.toLowerCase() ? { ...u, name, role } : u);
+          localStorage.setItem(LOCAL_USER_STORE, JSON.stringify(updated));
+        } else {
+          registeredUsers.push({ email, pass, name, role, created_at: new Date().toISOString() });
+          localStorage.setItem(LOCAL_USER_STORE, JSON.stringify(registeredUsers));
+        }
 
-      setIsAdmin(role === 'admin');
-      localStorage.setItem(LOCAL_ADMIN_KEY, role === 'admin' ? 'true' : 'false');
-      return { success: true };
+        // Local fallback: same OTP challenge (no auto-login → no grant_type flood)
+        const { code } = issueOtp(email);
+        await sendBrevoWelcomeEmail({ email, name, role, otp: code, otpExpiresInMin: 10 });
+        return { success: true, requiresOtp: true, email };
+      } catch (err: any) {
+        return { success: false, error: err.message || 'Registration failed' };
+      }
+    });
+  };
+
+  /**
+   * Complete Registration OTP verification (no auto-login)
+   */
+  const verifyRegistrationOtp = async (email: string, code: string): Promise<{ success: boolean; error?: string }> => {
+    return globalLoadBalancer.schedule(async () => {
+      const result = verifyOtp(email, code);
+      if (result.success) {
+        // Finalize session against the local registered account (no grant_type flow)
+        const storedUsersRaw = localStorage.getItem(LOCAL_USER_STORE);
+        let registeredUsers: any[] = [];
+        if (storedUsersRaw) {
+          try { registeredUsers = JSON.parse(storedUsersRaw); } catch {}
+        }
+        const account = registeredUsers.find((u: any) => u.email?.toLowerCase() === email.toLowerCase().trim());
+        if (account) {
+          setUser({ id: account.email, email: account.email } as any);
+          if (account.role === 'admin') {
+            setIsAdmin(true);
+            localStorage.setItem(LOCAL_ADMIN_KEY, 'true');
+          }
+          return { success: true };
+        }
+        return { success: false, error: 'Account not found. Please register again.' };
+      }
+      const msg =
+        result.reason === 'expired' ? 'Verification code expired. Please request a new one.' :
+        result.reason === 'locked' ? 'Too many attempts. Please request a fresh code.' :
+        'Incorrect verification code. Please try again.';
+      return { success: false, error: msg };
     });
   };
 
@@ -174,7 +218,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, isAdmin, loading, loginWithEmail, registerUser, logout }}>
+    <AuthContext.Provider value={{ user, session, isAdmin, loading, loginWithEmail, registerUser, verifyRegistrationOtp, logout }}>
       {children}
     </AuthContext.Provider>
   );
