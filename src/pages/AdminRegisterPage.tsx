@@ -6,7 +6,7 @@ import { BREVO_CONFIG } from '../lib/brevoSmtp';
 
 export const AdminRegisterPage: React.FC = () => {
   const navigate = useNavigate();
-  const { registerUser } = useAuth();
+  const { registerUser, verifyRegistrationOtp } = useAuth();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -15,6 +15,12 @@ export const AdminRegisterPage: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // OTP challenge step state
+  const [requiresOtp, setRequiresOtp] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,7 +37,14 @@ export const AdminRegisterPage: React.FC = () => {
     try {
       // Public sign-up is strictly for Customers (zero admin/product management permissions)
       const res = await registerUser({ email, pass: password, name, role: 'customer' });
-      if (res.success) {
+      if (res.success && res.requiresOtp) {
+        // OTP challenge dispatched via Brevo — hold the form and verify before activation
+        setRequiresOtp(true);
+        setPendingEmail(res.email || email);
+        setOtpCode('');
+        setSuccess(false);
+        setError('');
+      } else if (res.success) {
         setSuccess(true);
         setTimeout(() => {
           navigate('/');
