@@ -1,0 +1,37 @@
+# Render Blueprint for the Kaal Vastr storefront.
+#
+# This is a static single-page app: Vite builds the frontend, Supabase
+# (hosted on Cloudflare) powers auth + the product catalogue, and Brevo SMTP
+# dispatches verification emails. There is no Node/web server to keep alive,
+# so the correct Render service type is `staticSite`.
+#
+# Deploy: connect this repo in Render -> Blueprint (render.yaml is detected
+# automatically). Then copy your real values for the two `sync: false`
+# variables below.
+
+services:
+  - type: staticSite
+    name: kaal-vastr-storefront
+    runtime: node
+    branch: master
+    plan: free
+    buildCommand: npm ci && npm run build
+    publishPath: dist
+    pullRequestPreviewsEnabled: true
+    # Single-page-application fallback: every route (e.g. /admin/register,
+    # /product/:id) serves index.html so deep links resolve.
+    routes:
+      - type: rewrite
+        source: /.*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    envVars:
+      # Set these in the Render dashboard after the service is created.
+      # They are injected at build time (Vite bakes them via import.meta.env).
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_PUBLISHABLE_KEY
+        sync: false
