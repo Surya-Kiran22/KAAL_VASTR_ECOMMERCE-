@@ -16,7 +16,9 @@ services:
     name: kaal-vastr-storefront
     runtime: static
     branch: master
-    plan: free
+    # Static sites have NO plan field (Render docs: "Static sites do not
+    # have a plan."). Omitting `plan` is what makes the free/static deploy
+    # valid.
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
     pullRequestPreviewsEnabled: true
