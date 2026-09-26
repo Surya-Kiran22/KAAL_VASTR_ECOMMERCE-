@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, fetchCurrentUserRole } from '../lib/supabase';
 import { sendBrevoWelcomeEmail } from '../lib/brevoSmtp';
 import { issueOtp, verifyOtp } from '../lib/otpEngine';
 import { globalLoadBalancer } from '../lib/loadBalancerThrottler';
@@ -33,16 +33,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export type UserRole = 'customer' | 'staff' | 'admin';
 
-/**
- * Resolves the application role for a Supabase user.
- * Defaults to 'customer' so a missing/garbage metadata role can never grant
- * admin or staff privileges. Roles are elevated only through the database.
- */
-const resolveSupabaseRole = (u: User | null | undefined): UserRole => {
-  const raw = u?.user_metadata?.role;
-  return raw === 'admin' || raw === 'staff' || raw === 'customer' ? raw : 'customer';
-};
-
 /** Applies a role to state + the legacy admin flag in one place. */
 const applyRole = (
   r: UserRole | null,
@@ -58,6 +48,24 @@ const applyRole = (
   }
 };
 
+/** Reads the role cached in user metadata. Defaults to 'customer'. */
+const roleFromMetadata = (u: User | null | undefined): UserRole => {
+  const raw = u?.user_metadata?.role;
+  return raw === 'admin' || raw === 'staff' || raw === 'customer' ? raw : 'customer';
+};
+
+/**
+ * Resolves the effective role for a signed-in Supabase user.
+ *
+ * The `profiles` row is authoritative; `user_metadata.role` is only a cache.
+ * Reading metadata alone locks out admins promoted with promote_to_admin(),
+ * because that helper never wrote metadata.
+ */
+const resolveEffectiveRole = async (u: User | null | undefined): Promise<UserRole> => {
+  const fromDb = await fetchCurrentUserRole();
+  return fromDb ?? roleFromMetadata(u);
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -69,11 +77,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (isSupabaseConfigured) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
+      supabase.auth.getSession().then(async ({ data: { session } }) => {
         setSession(session);
         setUser(session?.user ?? null);
         if (session?.user) {
-          applyRole(resolveSupabaseRole(session.user), setRole, setIsAdmin);
+          applyRole(await resolveEffectiveRole(session.user), setRole, setIsAdmin);
         } else {
           applyRole(null, setRole, setIsAdmin);
         }
@@ -84,11 +92,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession(session);
         setUser(session?.user ?? null);
         if (session?.user) {
-          applyRole(resolveSupabaseRole(session.user), setRole, setIsAdmin);
+          // Resolved outside the callback: Supabase warns about awaiting
+          // inside onAuthStateChange, and a network call can deadlock it.
+          resolveEffectiveRole(session.user).then((r) => {
+            applyRole(r, setRole, setIsAdmin);
+            setLoading(false);
+          });
         } else {
           applyRole(null, setRole, setIsAdmin);
+          setLoading(false);
         }
-        setLoading(false);
       });
 
       return () => subscription.unsubscribe();
@@ -122,7 +135,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (data.session) {
             setSession(data.session);
             setUser(data.user);
-            const supaRole = resolveSupabaseRole(data.user);
+            // Await the authoritative role so ProtectedRoute sees the correct
+            // value on the very first render after login.
+            const supaRole = await resolveEffectiveRole(data.user);
             applyRole(supaRole, setRole, setIsAdmin);
             localStorage.setItem(LOCAL_ADMIN_KEY, 'true');
             return { success: true };

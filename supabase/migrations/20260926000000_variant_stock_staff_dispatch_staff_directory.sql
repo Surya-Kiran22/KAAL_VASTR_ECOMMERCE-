@@ -228,3 +228,40 @@ end $$;
 
 revoke all on function public.set_user_role(text, text) from public, anon;
 grant execute on function public.set_user_role(text, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 5. REPAIR promote_to_admin()
+--    The original helper only wrote profiles.role and never touched
+--    auth.users.raw_user_meta_data, so an admin promoted with it had no
+--    metadata role. Keep the metadata cache in sync from now on.
+-- ---------------------------------------------------------------------------
+create or replace function public.promote_to_admin(target_email text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.profiles p
+  set role = 'admin'
+  from auth.users u
+  where u.id = p.id and lower(u.email) = lower(target_email);
+
+  if not found then
+    raise exception 'No account found for %', target_email;
+  end if;
+
+  update auth.users u
+  set raw_user_meta_data = coalesce(u.raw_user_meta_data, '{}'::jsonb)
+                          || jsonb_build_object('role', 'admin')
+  where lower(u.email) = lower(target_email);
+end $$;
+
+-- Backfill the metadata role for every existing account so no one is locked
+-- out of the dashboard by a stale cache.
+update auth.users u
+set raw_user_meta_data = coalesce(u.raw_user_meta_data, '{}'::jsonb)
+                        || jsonb_build_object('role', p.role)
+from public.profiles p
+where p.id = u.id
+  and (u.raw_user_meta_data ->> 'role') is distinct from p.role;

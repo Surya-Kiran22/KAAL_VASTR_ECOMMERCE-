@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { Lock, ShieldCheck, KeyRound, Server, Cpu } from 'lucide-react';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Lock, ShieldCheck, KeyRound, Server, Cpu, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export const AdminLoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const { loginWithEmail } = useAuth();
+  const location = useLocation();
+  const { loginWithEmail, isStaff } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -34,7 +35,18 @@ export const AdminLoginPage: React.FC = () => {
   return (
     <div className="min-h-[70vh] flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md bg-[#141416] border border-[#27272A] rounded-lg p-8 shadow-2xl space-y-6">
-        
+
+        {/* Signed in, but not staff/admin: explain instead of looping silently */}
+        {!isStaff && (location.state as any)?.from && (
+          <div className="p-3.5 rounded-md text-xs border border-amber-500/30 bg-amber-500/10 text-amber-400 flex items-start space-x-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              You are signed in, but this account is not a Staff or Admin account, so the
+              dashboard is not available. Ask an admin to promote you.
+            </span>
+          </div>
+        )}
+
         {/* Header */}
         <div className="text-center space-y-2">
           <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white mx-auto">

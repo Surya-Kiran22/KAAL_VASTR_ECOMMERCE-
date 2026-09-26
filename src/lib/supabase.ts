@@ -405,6 +405,41 @@ export async function fetchStaffAccounts(): Promise<StaffAccount[]> {
 }
 
 /**
+ * Reads the authoritative role for the signed-in user from `profiles`.
+ *
+ * `user_metadata.role` is only a cache written by set_user_role(); the
+ * database row is the source of truth. Accounts promoted with
+ * `promote_to_admin()` or edited directly in Supabase have no metadata role,
+ * so falling back to it alone would lock legitimate staff out of /admin.
+ *
+ * Returns null when Supabase is unavailable or the row cannot be read.
+ */
+export async function fetchCurrentUserRole(): Promise<'customer' | 'staff' | 'admin' | null> {
+  if (!isSupabaseConfigured) return null;
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user?.email) return null;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('fetchCurrentUserRole failed:', error.message);
+      return null;
+    }
+
+    const role = data?.role;
+    return role === 'admin' || role === 'staff' || role === 'customer' ? role : null;
+  } catch (err) {
+    console.warn('fetchCurrentUserRole failed:', err);
+    return null;
+  }
+}
+
+/**
  * Promotes or demotes an account. Requires the admin-only
  * `set_user_role(text, text)` database function.
  */
