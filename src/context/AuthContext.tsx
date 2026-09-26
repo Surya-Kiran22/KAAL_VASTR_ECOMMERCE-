@@ -17,11 +17,12 @@ interface AuthContextType {
   session: Session | null;
   isAdmin: boolean;
   isStaff: boolean;
-  role: string | null;
+  role: UserRole | null;
   loading: boolean;
   loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   registerUser: (params: RegisterParams) => Promise<{ success: boolean; error?: string; requiresOtp?: boolean; email?: string }>;
   verifyRegistrationOtp: (email: string, code: string) => Promise<{ success: boolean; error?: string }>;
+  verifyAccountOtp: (email: string, code: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
 }
 
@@ -30,13 +31,40 @@ const LOCAL_USER_STORE = 'kaalvastr_users_store';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+export type UserRole = 'customer' | 'staff' | 'admin';
+
+/**
+ * Resolves the application role for a Supabase user.
+ * Defaults to 'customer' so a missing/garbage metadata role can never grant
+ * admin or staff privileges. Roles are elevated only through the database.
+ */
+const resolveSupabaseRole = (u: User | null | undefined): UserRole => {
+  const raw = u?.user_metadata?.role;
+  return raw === 'admin' || raw === 'staff' || raw === 'customer' ? raw : 'customer';
+};
+
+/** Applies a role to state + the legacy admin flag in one place. */
+const applyRole = (
+  r: UserRole | null,
+  setRole: (v: UserRole | null) => void,
+  setIsAdmin: (v: boolean) => void
+) => {
+  setRole(r);
+  setIsAdmin(r === 'admin');
+  if (r) {
+    localStorage.setItem('kaalvastr_user_role', r);
+  } else {
+    localStorage.removeItem('kaalvastr_user_role');
+  }
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(() => {
     return localStorage.getItem(LOCAL_ADMIN_KEY) === 'true';
   });
-  const [role, setRole] = useState<string | null>(null);
+  const [role, setRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -44,11 +72,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supabase.auth.getSession().then(({ data: { session } }) => {
         setSession(session);
         setUser(session?.user ?? null);
-        setIsAdmin(Boolean(session?.user));
         if (session?.user) {
-          setRole((session.user.user_metadata?.role as string) || 'admin');
+          applyRole(resolveSupabaseRole(session.user), setRole, setIsAdmin);
         } else {
-          setRole(null);
+          applyRole(null, setRole, setIsAdmin);
         }
         setLoading(false);
       });
@@ -56,11 +83,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
-        setIsAdmin(Boolean(session?.user));
         if (session?.user) {
-          setRole((session.user.user_metadata?.role as string) || 'admin');
+          applyRole(resolveSupabaseRole(session.user), setRole, setIsAdmin);
         } else {
-          setRole(null);
+          applyRole(null, setRole, setIsAdmin);
         }
         setLoading(false);
       });
@@ -70,8 +96,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Local demo mode setup
       const localSession = localStorage.getItem(LOCAL_ADMIN_KEY);
       if (localSession === 'true') {
-        setIsAdmin(true);
-        setRole(localStorage.getItem('kaalvastr_user_role') || 'admin');
+        const stored = localStorage.getItem('kaalvastr_user_role');
+        applyRole(stored === 'staff' || stored === 'customer' ? stored : 'admin', setRole, setIsAdmin);
       }
       setLoading(false);
     }
@@ -96,10 +122,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (data.session) {
             setSession(data.session);
             setUser(data.user);
-            setIsAdmin(true);
-            const supaRole = (data.user?.user_metadata?.role as string) || 'admin';
-            setRole(supaRole);
-            localStorage.setItem('kaalvastr_user_role', supaRole);
+            const supaRole = resolveSupabaseRole(data.user);
+            applyRole(supaRole, setRole, setIsAdmin);
             localStorage.setItem(LOCAL_ADMIN_KEY, 'true');
             return { success: true };
           }
@@ -118,10 +142,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const foundUser = registeredUsers.find(u => u.email === email && u.pass === pass);
 
       if (foundUser || (email === 'admin@kaalvastr.in' || email === 'admin') && (pass === 'kaalvastr123' || pass === 'admin123')) {
-        setIsAdmin(true);
-        setRole((foundUser?.role as string) || 'admin');
+        const foundRole = foundUser?.role;
+        const resolved: UserRole =
+          foundRole === 'admin' || foundRole === 'staff' || foundRole === 'customer'
+            ? foundRole
+            : 'admin';
+        applyRole(resolved, setRole, setIsAdmin);
         localStorage.setItem(LOCAL_ADMIN_KEY, 'true');
-        localStorage.setItem('kaalvastr_user_role', (foundUser?.role as string) || 'admin');
         return { success: true };
       }
 
@@ -210,10 +237,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const account = registeredUsers.find((u: any) => u.email?.toLowerCase() === email.toLowerCase().trim());
         if (account) {
           setUser({ id: account.email, email: account.email } as any);
-          setRole((account.role as string) || 'customer');
-          localStorage.setItem('kaalvastr_user_role', (account.role as string) || 'customer');
-          if (account.role === 'admin') {
-            setIsAdmin(true);
+          const accountRole = account.role;
+          const resolved: UserRole =
+            accountRole === 'admin' || accountRole === 'staff' || accountRole === 'customer'
+              ? accountRole
+              : 'customer';
+          applyRole(resolved, setRole, setIsAdmin);
+          if (resolved === 'admin') {
             localStorage.setItem(LOCAL_ADMIN_KEY, 'true');
           }
           return { success: true };
@@ -240,10 +270,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('kaalvastr_user_role');
   };
 
+  /**
+   * Validates a registration OTP without touching the current session.
+   * Used by the admin dashboard when provisioning a staff account, so the
+   * admin stays logged in while the new account is verified.
+   */
+  const verifyAccountOtp = async (email: string, code: string): Promise<{ success: boolean; error?: string }> => {
+    return globalLoadBalancer.schedule(async () => {
+      const result = verifyOtp(email, code);
+      if (result.success) return { success: true };
+      const msg =
+        result.reason === 'expired' ? 'Verification code expired. Please re-send the invite.' :
+        result.reason === 'locked' ? 'Too many attempts. Please re-send the invite.' :
+        'Incorrect verification code. Please try again.';
+      return { success: false, error: msg };
+    });
+  };
+
   const isStaff = role === 'admin' || role === 'staff';
 
   return (
-    <AuthContext.Provider value={{ user, session, isAdmin, isStaff, role, loading, loginWithEmail, registerUser, verifyRegistrationOtp, logout }}>
+    <AuthContext.Provider value={{ user, session, isAdmin, isStaff, role, loading, loginWithEmail, registerUser, verifyRegistrationOtp, verifyAccountOtp, logout }}>
       {children}
     </AuthContext.Provider>
   );

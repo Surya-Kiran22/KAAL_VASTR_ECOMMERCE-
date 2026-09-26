@@ -3,7 +3,8 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAdmin, loading } = useAuth();
+  // Staff and admins both operate the dashboard; customers never see it.
+  const { isStaff, loading } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -14,7 +15,7 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
     );
   }
 
-  if (!isAdmin) {
+  if (!isStaff) {
     return <Navigate to="/admin/login" state={{ from: location }} replace />;
   }
 

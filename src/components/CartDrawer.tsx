@@ -3,6 +3,17 @@ import { X, Trash2, Plus, Minus, ShoppingBag, ArrowRight } from 'lucide-react';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { WhatsAppModal } from './WhatsAppModal';
+import { CartItem } from '../types';
+
+/** Units available for the item's exact color/size, as entered by the admin. */
+const maxQtyFor = (item: CartItem): number => {
+  const map = item.product.variant_stock;
+  if (map && item.selectedColor) {
+    const key = `${item.selectedColor}|${item.selectedSize}`;
+    if (key in map) return Number(map[key]) || 0;
+  }
+  return item.product.stock;
+};
 
 export const CartDrawer: React.FC = () => {
   const { cart, removeFromCart, updateQuantity, clearCart, subtotal, isCartOpen, setIsCartOpen } = useCart();
@@ -106,12 +117,16 @@ export const CartDrawer: React.FC = () => {
                         <span className="px-3 text-xs font-medium text-white">{item.quantity}</span>
                         <button
                           onClick={() => updateQuantity(index, item.quantity + 1)}
-                          className="p-1 text-zinc-400 hover:text-white transition-colors"
+                          disabled={item.quantity >= maxQtyFor(item)}
+                          className="p-1 text-zinc-400 hover:text-white transition-colors disabled:opacity-30 disabled:hover:text-zinc-400 disabled:cursor-not-allowed"
                           aria-label="Increase quantity"
                         >
                           <Plus className="w-3.5 h-3.5" />
                         </button>
                       </div>
+                      {maxQtyFor(item) < item.product.stock && (
+                        <span className="text-[10px] text-amber-400">Max {maxQtyFor(item)} available</span>
+                      )}
                       <span className="text-xs text-zinc-400 font-medium">
                         ₹{(item.product.selling_price * item.quantity).toLocaleString('en-IN')}
                       </span>

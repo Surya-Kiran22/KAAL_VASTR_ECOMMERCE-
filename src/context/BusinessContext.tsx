@@ -17,9 +17,11 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadSettings = async () => {
+  const loadSettings = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       setError(null);
       const data = await fetchBusinessSettings();
       setSettings(data);
@@ -27,7 +29,9 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       console.error('Failed to load business settings:', err);
       setError('Failed to load store business details');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -44,6 +48,17 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   useEffect(() => {
     loadSettings();
+
+    // Keep store details (WhatsApp number, address, timings) fresh everywhere
+    // without any manual refresh control.
+    const poll = window.setInterval(() => loadSettings(true), 30000);
+    const onFocus = () => loadSettings(true);
+
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(poll);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   return (

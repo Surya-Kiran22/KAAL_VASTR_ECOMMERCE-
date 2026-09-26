@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { Product, BusinessSettings, Order, OrderItem, SalesAnalytics } from '../types';
+import { Product, BusinessSettings, Order, OrderItem, SalesAnalytics, StaffAccount } from '../types';
 
 
 const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -302,6 +302,7 @@ export async function saveProduct(product: Partial<Product>): Promise<Product> {
     image_url: product.image_url || 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=800&q=80',
     images: product.images || [],
     stock: product.stock ?? 10,
+    variant_stock: product.variant_stock ?? null,
     is_available: product.is_available ?? true,
     is_archived: product.is_archived ?? false,
     created_at: new Date().toISOString(),
@@ -356,6 +357,67 @@ export async function saveBusinessSettings(settings: Partial<BusinessSettings>):
   const updated = { ...current, ...settings, updated_at: new Date().toISOString() };
   localStorage.setItem(LOCAL_STORAGE_SETTINGS, JSON.stringify(updated));
   return updated;
+}
+
+/**
+ * Loads every staff/admin account from the `profiles` table.
+ * RLS restricts this to staff/admin callers and to staff/admin rows only.
+ * Falls back to the local registered-user store when Supabase is unavailable.
+ */
+export async function fetchStaffAccounts(): Promise<StaffAccount[]> {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, role, created_at')
+        .in('role', ['admin', 'staff'])
+        .not('email', 'is', null)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        return data as StaffAccount[];
+      }
+      return [];
+    } catch (err) {
+      console.warn('Supabase fetchStaffAccounts failed, using local store', err);
+    }
+  }
+
+  // Local fallback: derive from the registered-user store
+  try {
+    const raw = localStorage.getItem('kaalvastr_users_store');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((u: any) => (u?.role === 'admin' || u?.role === 'staff') && u?.email)
+      .map((u: any, i: number) => ({
+        id: `local-${i}-${u.email}`,
+        email: u.email as string,
+        full_name: (u.name as string) || (u.email as string),
+        role: u.role as 'admin' | 'staff',
+        created_at: u.created_at as string | undefined,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Promotes or demotes an account. Requires the admin-only
+ * `set_user_role(text, text)` database function.
+ */
+export async function setUserRole(email: string, role: 'customer' | 'staff' | 'admin'): Promise<boolean> {
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.rpc('set_user_role', {
+      target_email: email,
+      new_role: role,
+    });
+    if (error) throw error;
+    return true;
+  }
+  return false;
 }
 
 export async function uploadProductImage(file: File): Promise<string> {
@@ -544,16 +606,17 @@ export async function fetchOrders(): Promise<Order[]> {
 
 export async function updateOrderStatus(orderId: string, status: Order['status']): Promise<boolean> {
   if (isSupabaseConfigured) {
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status })
-        .eq('id', orderId);
+    const { error } = await supabase
+      .from('orders')
+      .update({ status })
+      .eq('id', orderId);
 
-      if (!error) return true;
-    } catch (err) {
-      console.warn('Supabase updateOrderStatus failed, using local store', err);
-    }
+    if (!error) return true;
+
+    // Dispatch status is staff-only in the database. Surface the rejection
+    // instead of silently writing to the local fallback store.
+    console.error('Order status update rejected:', error.message);
+    return false;
   }
 
   const orders = getStoredOrders();

@@ -12,18 +12,28 @@ export const HomePage: React.FC = () => {
   const [sortBy, setSortBy] = useState<'featured' | 'price-asc' | 'price-desc'>('featured');
 
   useEffect(() => {
-    async function loadData() {
-      setLoading(true);
+    async function loadData(silent = false) {
+      if (!silent) setLoading(true);
       try {
         const data = await fetchProducts(false); // Only active non-archived products
         setProducts(data);
       } catch (err) {
         console.error('Failed to load products:', err);
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
     }
     loadData();
+
+    // Auto-refresh catalog so stock/price changes appear without a manual reload
+    const poll = window.setInterval(() => loadData(true), 30000);
+    const onFocus = () => loadData(true);
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      window.clearInterval(poll);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   const categories = ['All', ...Array.from(new Set(products.map((p) => p.category)))];

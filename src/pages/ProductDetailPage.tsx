@@ -24,28 +24,32 @@ export const ProductDetailPage: React.FC = () => {
   const [sizeError, setSizeError] = useState<string>('');
 
   useEffect(() => {
-    async function loadProduct() {
+    async function loadProduct(silent = false) {
       if (!id) return;
-      setLoading(true);
+      if (!silent) setLoading(true);
       try {
         const data = await fetchProductById(id);
         if (data) {
           setProduct(data);
           setSelectedImage(data.image_url);
           if (data.sizes && data.sizes.length > 0) {
-            setSelectedSize(data.sizes[0]);
+            setSelectedSize((prev) => prev || data.sizes[0]);
           }
           if (data.colors && data.colors.length > 0) {
-            setSelectedColor(data.colors[0]);
+            setSelectedColor((prev) => prev || data.colors[0]);
           }
         }
       } catch (err) {
         console.error('Failed to load product details:', err);
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
     }
     loadProduct();
+
+    // Auto-refresh stock/price for this product without a manual reload
+    const poll = window.setInterval(() => loadProduct(true), 30000);
+    return () => window.clearInterval(poll);
   }, [id]);
 
   if (loading) {
@@ -81,7 +85,16 @@ export const ProductDetailPage: React.FC = () => {
     );
   }
 
-  const isOutOfStock = product.stock <= 0 || !product.is_available;
+  // Per-variant availability (color + size) when the admin has entered variant stock
+  const variantStockMap = product.variant_stock || null;
+  const selectedVariantKey = `${selectedColor}|${selectedSize}`;
+  const selectedVariantQty =
+    variantStockMap && selectedVariantKey in variantStockMap
+      ? Number(variantStockMap[selectedVariantKey]) || 0
+      : null;
+  const availableQty = selectedVariantQty ?? product.stock;
+
+  const isOutOfStock = availableQty <= 0 || !product.is_available;
   const galleryImages = Array.from(new Set([product.image_url, ...(product.images || [])])).filter(Boolean);
 
   const handleAddToCart = () => {
@@ -249,6 +262,26 @@ export const ProductDetailPage: React.FC = () => {
             </div>
           )}
 
+          {/* Variant Availability Indicator */}
+          {selectedVariantQty !== null && selectedColor && selectedSize && (
+            <div
+              className={`p-3 border rounded-md text-xs flex items-center justify-between ${
+                selectedVariantQty > 5
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  : selectedVariantQty > 0
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                  : 'bg-red-500/10 border-red-500/30 text-red-400'
+              }`}
+            >
+              <span>
+                {selectedColor} / {selectedSize}
+              </span>
+              <span className="font-mono font-semibold">
+                {selectedVariantQty > 0 ? `${selectedVariantQty} left` : 'Out of stock'}
+              </span>
+            </div>
+          )}
+
           {/* Quantity Selector - hidden for staff/admin */}
           <div className="space-y-3">
             {!isStaff && (
@@ -266,8 +299,8 @@ export const ProductDetailPage: React.FC = () => {
                   </button>
                   <span className="px-4 text-xs font-bold text-white">{quantity}</span>
                   <button
-                    disabled={quantity >= product.stock || isOutOfStock}
-                    onClick={() => setQuantity((q) => Math.min(product.stock, q + 1))}
+                    disabled={quantity >= availableQty || isOutOfStock}
+                    onClick={() => setQuantity((q) => Math.min(availableQty, q + 1))}
                     className="px-3 py-2 text-zinc-400 hover:text-white disabled:opacity-30 transition-colors"
                   >
                     +

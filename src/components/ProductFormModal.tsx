@@ -28,6 +28,14 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({ product, onC
   const [isAvailable, setIsAvailable] = useState(product?.is_available ?? true);
   const [isArchived, setIsArchived] = useState(product?.is_archived ?? false);
 
+  // Per-variant stock, keyed "color|size"
+  const [variantStock, setVariantStock] = useState<Record<string, number>>(
+    product?.variant_stock ? { ...product.variant_stock } : {}
+  );
+  const [useVariantStock, setUseVariantStock] = useState<boolean>(
+    Boolean(product?.variant_stock && Object.keys(product.variant_stock).length > 0)
+  );
+
   const [uploadingImage, setUploadingImage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -54,6 +62,32 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({ product, onC
     );
   };
 
+  const parseColors = () =>
+    colorsInput
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean);
+
+  const variantKey = (color: string, size: string) => `${color}|${size}`;
+
+  const setVariantQty = (color: string, size: string, value: number) => {
+    setVariantStock((prev) => {
+      const next = { ...prev };
+      const key = variantKey(color, size);
+      if (value > 0) {
+        next[key] = value;
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const getVariantQty = (color: string, size: string) => {
+    const key = variantKey(color, size);
+    return variantStock[key] ?? 0;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !sellingPrice || !sku.trim()) {
@@ -70,10 +104,11 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({ product, onC
     setError('');
 
     try {
-      const colorsArray = colorsInput
-        .split(',')
-        .map((c) => c.trim())
-        .filter(Boolean);
+      const colorsArray = parseColors();
+
+      // When per-variant stock is enabled, the flat total is the sum of all variants
+      const variantTotal = Object.values(variantStock).reduce((a, b) => a + b, 0);
+      const effectiveStock = useVariantStock ? variantTotal : (parseInt(stock, 10) || 0);
 
       const productPayload: Partial<Product> = {
         id: product?.id,
@@ -87,8 +122,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({ product, onC
         sizes: selectedSizes,
         colors: colorsArray,
         image_url: imageUrl || 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=800&q=80',
-        stock: parseInt(stock, 10) || 0,
-        is_available: isAvailable,
+        stock: effectiveStock,
+        variant_stock: useVariantStock ? variantStock : null,
+        is_available: useVariantStock ? variantTotal > 0 : isAvailable,
         is_archived: isArchived,
       };
 
@@ -229,16 +265,115 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({ product, onC
 
             <div>
               <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1">
-                Stock Inventory
+                Stock Inventory {useVariantStock && <span className="text-zinc-500 normal-case">(auto-summed)</span>}
               </label>
               <input
                 type="number"
-                value={stock}
+                value={useVariantStock ? String(Object.values(variantStock).reduce((a, b) => a + b, 0)) : stock}
                 onChange={(e) => setStock(e.target.value)}
                 placeholder="10"
-                className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-md text-xs text-white focus:outline-none focus:border-zinc-500"
+                disabled={useVariantStock}
+                className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-md text-xs text-white focus:outline-none focus:border-zinc-500 disabled:opacity-50"
               />
             </div>
+          </div>
+
+          {/* Per-Variant (Color x Size) Stock */}
+          <div className="space-y-3">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1">
+                  Quantity Per Color &amp; Size
+                </label>
+                <p className="text-[11px] text-zinc-500">
+                  Enter the exact quantity available for each color/size combination. Total stock is
+                  calculated automatically.
+                </p>
+              </div>
+              <label className="inline-flex items-center space-x-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white text-[10px] font-medium uppercase tracking-wider rounded-md cursor-pointer transition-colors border border-zinc-700 shrink-0">
+                <input
+                  type="checkbox"
+                  checked={useVariantStock}
+                  onChange={(e) => setUseVariantStock(e.target.checked)}
+                  className="w-3 h-3 accent-white"
+                />
+                <span>Enabled</span>
+              </label>
+            </div>
+
+            {useVariantStock && parseColors().length > 0 && selectedSizes.length > 0 ? (
+              <div className="overflow-x-auto border border-zinc-800 rounded-md">
+                <table className="w-full text-xs">
+                  <thead className="bg-zinc-900 text-zinc-400 uppercase tracking-widest text-[10px]">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold">Color \ Size</th>
+                      {selectedSizes.map((size) => (
+                        <th key={size} className="px-3 py-2 text-center font-semibold">
+                          {size}
+                        </th>
+                      ))}
+                      <th className="px-3 py-2 text-right font-semibold">Row Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/80">
+                    {parseColors().map((color) => {
+                      const rowTotal = selectedSizes.reduce(
+                        (sum, size) => sum + getVariantQty(color, size),
+                        0
+                      );
+                      return (
+                        <tr key={color} className="hover:bg-zinc-900/50 transition-colors">
+                          <td className="px-3 py-2 font-medium text-white whitespace-nowrap">{color}</td>
+                          {selectedSizes.map((size) => {
+                            const qty = getVariantQty(color, size);
+                            return (
+                              <td key={size} className="px-2 py-1.5 text-center">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={qty === 0 ? '' : qty}
+                                  onChange={(e) =>
+                                    setVariantQty(color, size, Math.max(0, parseInt(e.target.value || '0', 10) || 0))
+                                  }
+                                  placeholder="0"
+                                  className={`w-14 px-2 py-1.5 bg-zinc-900 border rounded text-center text-xs text-white focus:outline-none ${
+                                    qty === 0
+                                      ? 'border-zinc-700 text-zinc-500'
+                                      : qty <= 5
+                                      ? 'border-amber-700 text-amber-300'
+                                      : 'border-zinc-600'
+                                  }`}
+                                />
+                              </td>
+                            );
+                          })}
+                          <td className="px-3 py-2 text-right font-mono text-zinc-300">
+                            {rowTotal}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-zinc-900/70 border-t border-zinc-800">
+                    <tr>
+                      <td
+                        className="px-3 py-2 text-[10px] uppercase tracking-widest text-zinc-400 font-semibold"
+                        colSpan={selectedSizes.length + 1}
+                      >
+                        Total Units
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono font-bold text-emerald-400">
+                        {Object.values(variantStock).reduce((a, b) => a + b, 0)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : useVariantStock ? (
+              <p className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
+                Add at least one color and one size to enter per-variant quantities.
+              </p>
+            ) : null}
           </div>
 
           {/* Description */}

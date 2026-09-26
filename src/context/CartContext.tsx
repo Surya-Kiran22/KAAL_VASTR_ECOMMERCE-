@@ -37,7 +37,19 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [cart]);
 
+  /** Units the admin recorded for a specific color/size (falls back to flat stock). */
+  const variantAvailability = (product: Product, size: string, color?: string): number => {
+    const map = product.variant_stock;
+    if (map && color) {
+      const key = `${color}|${size}`;
+      if (key in map) return Number(map[key]) || 0;
+    }
+    return product.stock;
+  };
+
   const addToCart = (product: Product, selectedSize: string, selectedColor?: string, quantity = 1) => {
+    const maxQty = variantAvailability(product, selectedSize, selectedColor);
+
     setCart((prev) => {
       const existingIdx = prev.findIndex(
         (item) => item.product.id === product.id && item.selectedSize === selectedSize && item.selectedColor === selectedColor
@@ -45,10 +57,13 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (existingIdx !== -1) {
         const updated = [...prev];
-        updated[existingIdx].quantity += quantity;
+        updated[existingIdx].quantity = Math.min(
+          maxQty,
+          updated[existingIdx].quantity + quantity
+        );
         return updated;
       } else {
-        return [...prev, { product, selectedSize, selectedColor, quantity }];
+        return [...prev, { product, selectedSize, selectedColor, quantity: Math.min(quantity, maxQty) }];
       }
     });
     setIsCartOpen(true);
@@ -65,7 +80,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setCart((prev) => {
       const updated = [...prev];
-      updated[index].quantity = newQty;
+      const item = updated[index];
+      const maxQty = variantAvailability(item.product, item.selectedSize, item.selectedColor);
+      updated[index].quantity = Math.min(newQty, maxQty);
       return updated;
     });
   };

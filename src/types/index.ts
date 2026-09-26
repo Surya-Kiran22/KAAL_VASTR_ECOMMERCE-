@@ -12,6 +12,8 @@ export interface Product {
   image_url: string;
   images?: string[];
   stock: number;
+  /** Per-variant stock keyed by "color|size" (e.g. "Black|XL"). Absent means use flat `stock`. */
+  variant_stock?: Record<string, number> | null;
   is_available: boolean;
   is_archived: boolean;
   created_at: string;
@@ -38,6 +40,14 @@ export interface CartItem {
   selectedSize: string;
   selectedColor?: string;
   quantity: number;
+}
+
+export interface StaffAccount {
+  id: string;
+  email: string;
+  full_name: string;
+  role: 'admin' | 'staff';
+  created_at?: string;
 }
 
 export interface WhatsAppOrderPayload {

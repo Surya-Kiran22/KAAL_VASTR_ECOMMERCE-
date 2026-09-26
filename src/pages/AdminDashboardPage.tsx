@@ -4,17 +4,17 @@ import {
   TrendingUp, DollarSign, Calendar, Users, ShoppingCart, AlertTriangle, ArrowUpRight,
   Clock, MessageSquare, CheckCircle2, ChevronRight, BarChart3, ShieldCheck, UserPlus, Mail, Lock
 } from 'lucide-react';
-import { Product, BusinessSettings, Order, SalesAnalytics } from '../types';
+import { Product, BusinessSettings, Order, SalesAnalytics, StaffAccount } from '../types';
 import {
   fetchProducts, archiveProductToggle, fetchSalesAnalytics,
-  fetchOrders, updateOrderStatus
+  fetchOrders, updateOrderStatus, fetchStaffAccounts, setUserRole
 } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useBusiness } from '../context/BusinessContext';
 import { ProductFormModal } from '../components/ProductFormModal';
 
 export const AdminDashboardPage: React.FC = () => {
-  const { logout, registerUser } = useAuth();
+  const { logout, registerUser, verifyAccountOtp, role } = useAuth();
   const { settings, updateSettings, refreshSettings } = useBusiness();
 
   const [activeTab, setActiveTab] = useState<'analytics' | 'products' | 'settings' | 'team'>('analytics');
@@ -25,29 +25,25 @@ export const AdminDashboardPage: React.FC = () => {
   const [staffPass, setStaffPass] = useState('');
   const [staffRole, setStaffRole] = useState<'staff' | 'admin'>('staff');
   const [creatingStaff, setCreatingStaff] = useState(false);
+  // Two-step provisioning: an account is created first, then activated once the
+  // invitee confirms the emailed OTP.
+  const [pendingStaffEmail, setPendingStaffEmail] = useState<string | null>(null);
+  const [staffOtp, setStaffOtp] = useState('');
+  const [verifyingStaffOtp, setVerifyingStaffOtp] = useState(false);
   const [staffMsg, setStaffMsg] = useState<{ success: boolean; text: string } | null>(null);
 
-  // Staff Roster (directory) state
-  const [roster, setRoster] = useState<{ name: string; email: string; role: string; created_at?: string }[]>([]);
+  // Staff Roster (directory) state — sourced from Supabase `staff_accounts`
+  const [roster, setRoster] = useState<StaffAccount[]>([]);
+  const [rosterLoading, setRosterLoading] = useState<boolean>(true);
 
-  const loadRoster = () => {
+  const loadRoster = async () => {
     try {
-      const raw = localStorage.getItem('kaalvastr_users_store');
-      if (!raw) { setRoster([]); return; }
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) { setRoster([]); return; }
-      setRoster(
-        parsed
-          .filter((u: any) => (u?.role === 'staff' || u?.role === 'admin') && u?.email)
-          .map((u: any) => ({
-            name: (u.name as string) || (u.email as string),
-            email: u.email as string,
-            role: u.role as string,
-            created_at: u.created_at as string | undefined,
-          }))
-      );
-    } catch {
-      setRoster([]);
+      const accounts = await fetchStaffAccounts();
+      setRoster(accounts);
+    } catch (err) {
+      console.error('Failed to load staff roster:', err);
+    } finally {
+      setRosterLoading(false);
     }
   };
 
@@ -57,6 +53,43 @@ export const AdminDashboardPage: React.FC = () => {
 
   const handleCreateStaff = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Step 2: the account was created and an invite email sent. Verify the OTP
+    // the invitee received, then elevate the account in the database.
+    if (pendingStaffEmail) {
+      setVerifyingStaffOtp(true);
+      setStaffMsg(null);
+      try {
+        const check = await verifyAccountOtp(pendingStaffEmail, staffOtp.trim());
+        if (!check.success) {
+          setStaffMsg({ success: false, text: check.error || 'Invalid verification code.' });
+          return;
+        }
+
+        await setUserRole(pendingStaffEmail, staffRole);
+
+        setStaffMsg({
+          success: true,
+          text: `${pendingStaffEmail} is now an active ${staffRole.toUpperCase()} account.`,
+        });
+        setPendingStaffEmail(null);
+        setStaffOtp('');
+        setStaffName('');
+        setStaffEmail('');
+        setStaffPass('');
+        loadRoster();
+      } catch (err: any) {
+        setStaffMsg({
+          success: false,
+          text: err?.message || 'Account created, but the role could not be assigned. Assign it manually in the database.',
+        });
+      } finally {
+        setVerifyingStaffOtp(false);
+      }
+      return;
+    }
+
+    // Step 1: create the account and send the OTP invite
     setCreatingStaff(true);
     setStaffMsg(null);
 
@@ -69,14 +102,19 @@ export const AdminDashboardPage: React.FC = () => {
       });
 
       if (res.success) {
-        loadRoster();
-        setStaffMsg({
-          success: true,
-          text: `Successfully created ${staffRole.toUpperCase()} account for ${staffName}! Verification email sent via Brevo SMTP (Port 2525).`,
-        });
-        setStaffName('');
-        setStaffEmail('');
-        setStaffPass('');
+        if (res.requiresOtp) {
+          setPendingStaffEmail(res.email || staffEmail.trim());
+          setStaffMsg({
+            success: true,
+            text: `Invite sent to ${res.email || staffEmail.trim()}. Enter the 6-digit code they received to activate this ${staffRole.toUpperCase()} account.`,
+          });
+        } else {
+          setStaffMsg({ success: true, text: `Created ${staffRole.toUpperCase()} account for ${staffName}.` });
+          setStaffName('');
+          setStaffEmail('');
+          setStaffPass('');
+          loadRoster();
+        }
       } else {
         setStaffMsg({ success: false, text: res.error || 'Failed to create staff account.' });
       }
@@ -92,6 +130,7 @@ export const AdminDashboardPage: React.FC = () => {
   const [analytics, setAnalytics] = useState<SalesAnalytics | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loadingAnalytics, setLoadingAnalytics] = useState<boolean>(true);
+  const [orderMsg, setOrderMsg] = useState<{ success: boolean; text: string } | null>(null);
   const [timeframe, setTimeframe] = useState<'day' | 'week' | 'month'>('day');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'fulfilled'>('all');
 
@@ -116,9 +155,11 @@ export const AdminDashboardPage: React.FC = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
 
-  const loadData = async () => {
-    setLoadingAnalytics(true);
-    setLoadingProducts(true);
+  const loadData = async (silent = false) => {
+    if (!silent) {
+      setLoadingAnalytics(true);
+      setLoadingProducts(true);
+    }
     try {
       const [prods, stats, ords] = await Promise.all([
         fetchProducts(true),
@@ -131,13 +172,36 @@ export const AdminDashboardPage: React.FC = () => {
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
     } finally {
-      setLoadingAnalytics(false);
-      setLoadingProducts(false);
+      if (!silent) {
+        setLoadingAnalytics(false);
+        setLoadingProducts(false);
+      }
     }
   };
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Auto-refresh dashboard data + business settings without a manual refresh button
+  useEffect(() => {
+    const poll = window.setInterval(() => {
+      loadData(true);
+      refreshSettings();
+      loadRoster();
+    }, 15000);
+
+    const onFocus = () => {
+      loadData(true);
+      refreshSettings();
+    };
+
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      window.clearInterval(poll);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   useEffect(() => {
@@ -161,9 +225,20 @@ export const AdminDashboardPage: React.FC = () => {
   };
 
   const handleOrderStatusUpdate = async (orderId: string, newStatus: Order['status']) => {
+    // Dispatch actions are staff-only; admins have read-only visibility
+    if (role !== 'staff') {
+      setOrderMsg({ success: false, text: 'Only Staff accounts can update dispatch status.' });
+      return;
+    }
     const ok = await updateOrderStatus(orderId, newStatus);
     if (ok) {
+      setOrderMsg({ success: true, text: 'Dispatch status updated.' });
       loadData();
+    } else {
+      setOrderMsg({
+        success: false,
+        text: 'Dispatch status could not be saved. Only Staff accounts can change it.',
+      });
     }
   };
 
@@ -228,13 +303,10 @@ export const AdminDashboardPage: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-3">
-          <button
-            onClick={() => loadData()}
-            className="p-2.5 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white rounded-md transition-colors"
-            title="Refresh analytics data"
-          >
-            <RefreshCw className={`w-4 h-4 ${loadingAnalytics ? 'animate-spin' : ''}`} />
-          </button>
+          <span className="hidden sm:flex items-center space-x-1.5 text-[10px] uppercase tracking-wider text-zinc-600">
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingAnalytics ? 'animate-spin' : ''}`} />
+            <span>Auto-refreshing</span>
+          </span>
 
           <button
             onClick={() => {
@@ -524,6 +596,31 @@ export const AdminDashboardPage: React.FC = () => {
 
           {/* Orders Log & Fulfillment Table */}
           <div className="bg-[#141416] border border-[#27272A] rounded-lg overflow-hidden shadow-xl space-y-4 p-6">
+            {role === 'staff' ? (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-md text-emerald-400 text-xs flex items-center space-x-2">
+                <Check className="w-4 h-4 shrink-0" />
+                <span>You are signed in as Staff — dispatch status updates are enabled.</span>
+              </div>
+            ) : (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-md text-amber-400 text-xs flex items-center space-x-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>Dispatch status is read-only for Admin accounts. Only Staff can update order status.</span>
+              </div>
+            )}
+
+            {orderMsg && (
+              <div
+                className={`p-3 rounded-md text-xs flex items-center space-x-2 border ${
+                  orderMsg.success
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    : 'bg-red-500/10 border-red-500/30 text-red-400'
+                }`}
+              >
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{orderMsg.text}</span>
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-800 pb-4">
               <div>
                 <h3 className="text-sm font-bold uppercase tracking-wider text-white flex items-center space-x-2">
@@ -613,16 +710,22 @@ export const AdminDashboardPage: React.FC = () => {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <select
-                            value={order.status}
-                            onChange={(e) => handleOrderStatusUpdate(order.id, e.target.value as Order['status'])}
-                            className="bg-zinc-900 border border-zinc-700 text-xs text-zinc-200 rounded px-2 py-1 focus:outline-none focus:border-zinc-500 cursor-pointer"
-                          >
-                            <option value="pending">Mark Pending</option>
-                            <option value="confirmed">Mark Confirmed</option>
-                            <option value="fulfilled">Mark Fulfilled</option>
-                            <option value="cancelled">Mark Cancelled</option>
-                          </select>
+                          {role === 'staff' ? (
+                            <select
+                              value={order.status}
+                              onChange={(e) => handleOrderStatusUpdate(order.id, e.target.value as Order['status'])}
+                              className="bg-zinc-900 border border-zinc-700 text-xs text-zinc-200 rounded px-2 py-1 focus:outline-none focus:border-zinc-500 cursor-pointer"
+                            >
+                              <option value="pending">Mark Pending</option>
+                              <option value="confirmed">Mark Confirmed</option>
+                              <option value="fulfilled">Mark Fulfilled</option>
+                              <option value="cancelled">Mark Cancelled</option>
+                            </select>
+                          ) : (
+                            <span className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[10px] uppercase tracking-wider text-zinc-500">
+                              Staff Only
+                            </span>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -970,7 +1073,7 @@ export const AdminDashboardPage: React.FC = () => {
                 <span>Available Staff &amp; Admin Accounts</span>
               </h3>
               <span className="text-[10px] font-mono text-zinc-500">
-                {roster.length} provisioned
+                {rosterLoading ? 'syncing…' : `${roster.length} provisioned`}
               </span>
             </div>
 
@@ -986,16 +1089,22 @@ export const AdminDashboardPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/80 text-zinc-300">
-                    {roster.length === 0 ? (
+                    {rosterLoading ? (
                       <tr>
                         <td colSpan={4} className="px-4 py-6 text-center text-zinc-500">
-                          No staff accounts provisioned on this device yet.
+                          Loading staff accounts…
+                        </td>
+                      </tr>
+                    ) : roster.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-6 text-center text-zinc-500">
+                          No staff or admin accounts found in the database.
                         </td>
                       </tr>
                     ) : (
                       roster.map((account) => (
-                        <tr key={account.email} className="hover:bg-zinc-900/60 transition-colors">
-                          <td className="px-4 py-3 font-semibold text-white">{account.name}</td>
+                        <tr key={account.id} className="hover:bg-zinc-900/60 transition-colors">
+                          <td className="px-4 py-3 font-semibold text-white">{account.full_name}</td>
                           <td className="px-4 py-3 font-mono text-zinc-400">{account.email}</td>
                           <td className="px-4 py-3">
                             <span
@@ -1040,6 +1149,54 @@ export const AdminDashboardPage: React.FC = () => {
           )}
 
           <form onSubmit={handleCreateStaff} className="space-y-4">
+            {pendingStaffEmail ? (
+              <>
+                <div className="p-3.5 rounded-md text-xs border border-sky-500/30 bg-sky-500/10 text-sky-300">
+                  Invitation sent to{' '}
+                  <span className="font-mono font-semibold">{pendingStaffEmail}</span>. The account
+                  stays inactive until the emailed code is confirmed below.
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1">
+                    Verification Code *
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={staffOtp}
+                    onChange={(e) => setStaffOtp(e.target.value.replace(/\D/g, ''))}
+                    placeholder="6-digit code"
+                    required
+                    className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-md text-sm tracking-[0.3em] text-center text-white focus:outline-none focus:border-zinc-500 font-mono"
+                  />
+                </div>
+
+                <div className="pt-4 border-t border-zinc-800 flex items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={verifyingStaffOtp || staffOtp.length !== 6}
+                    className="flex-1 py-3 bg-white text-black font-semibold text-xs tracking-widest uppercase rounded-md hover:bg-zinc-200 transition-all flex items-center justify-center space-x-2 disabled:opacity-50"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>{verifyingStaffOtp ? 'Activating...' : 'Verify & Activate'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingStaffEmail(null);
+                      setStaffOtp('');
+                      setStaffMsg(null);
+                    }}
+                    className="px-4 py-3 border border-zinc-700 text-zinc-400 hover:text-white text-xs tracking-widest uppercase rounded-md transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
             <div>
               <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1">
                 Full Name *
@@ -1091,9 +1248,14 @@ export const AdminDashboardPage: React.FC = () => {
                 onChange={(e) => setStaffRole(e.target.value as any)}
                 className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-md text-xs text-white focus:outline-none focus:border-zinc-500 cursor-pointer"
               >
-                <option value="staff">Staff (Inventory & Order Processing Access)</option>
-                <option value="admin">Admin (Full System & Business Management Access)</option>
+                <option value="staff">Staff (Inventory &amp; Dispatch Status Access)</option>
+                <option value="admin">Admin (Full System &amp; Business Management Access)</option>
               </select>
+              {staffRole === 'admin' && (
+                <p className="mt-1.5 text-[11px] text-amber-400">
+                  Admins can manage the catalogue, staff and orders, but cannot change dispatch status.
+                </p>
+              )}
             </div>
 
             <div className="pt-4 border-t border-zinc-800">
@@ -1103,9 +1265,11 @@ export const AdminDashboardPage: React.FC = () => {
                 className="w-full py-3 bg-white text-black font-semibold text-xs tracking-widest uppercase rounded-md hover:bg-zinc-200 transition-all flex items-center justify-center space-x-2 disabled:opacity-50"
               >
                 <UserPlus className="w-4 h-4" />
-                <span>{creatingStaff ? 'Provisioning Account...' : 'Provision Staff Account'}</span>
+                <span>{creatingStaff ? 'Sending Invite...' : 'Send Invite'}</span>
               </button>
             </div>
+              </>
+            )}
           </form>
         </div>
       )}
