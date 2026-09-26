@@ -16,6 +16,8 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   isAdmin: boolean;
+  isStaff: boolean;
+  role: string | null;
   loading: boolean;
   loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   registerUser: (params: RegisterParams) => Promise<{ success: boolean; error?: string; requiresOtp?: boolean; email?: string }>;
@@ -34,6 +36,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAdmin, setIsAdmin] = useState<boolean>(() => {
     return localStorage.getItem(LOCAL_ADMIN_KEY) === 'true';
   });
+  const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -42,6 +45,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession(session);
         setUser(session?.user ?? null);
         setIsAdmin(Boolean(session?.user));
+        if (session?.user) {
+          setRole((session.user.user_metadata?.role as string) || 'admin');
+        } else {
+          setRole(null);
+        }
         setLoading(false);
       });
 
@@ -49,6 +57,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSession(session);
         setUser(session?.user ?? null);
         setIsAdmin(Boolean(session?.user));
+        if (session?.user) {
+          setRole((session.user.user_metadata?.role as string) || 'admin');
+        } else {
+          setRole(null);
+        }
         setLoading(false);
       });
 
@@ -58,6 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const localSession = localStorage.getItem(LOCAL_ADMIN_KEY);
       if (localSession === 'true') {
         setIsAdmin(true);
+        setRole(localStorage.getItem('kaalvastr_user_role') || 'admin');
       }
       setLoading(false);
     }
@@ -83,6 +97,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setSession(data.session);
             setUser(data.user);
             setIsAdmin(true);
+            const supaRole = (data.user?.user_metadata?.role as string) || 'admin';
+            setRole(supaRole);
+            localStorage.setItem('kaalvastr_user_role', supaRole);
             localStorage.setItem(LOCAL_ADMIN_KEY, 'true');
             return { success: true };
           }
@@ -102,7 +119,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (foundUser || (email === 'admin@kaalvastr.in' || email === 'admin') && (pass === 'kaalvastr123' || pass === 'admin123')) {
         setIsAdmin(true);
+        setRole((foundUser?.role as string) || 'admin');
         localStorage.setItem(LOCAL_ADMIN_KEY, 'true');
+        localStorage.setItem('kaalvastr_user_role', (foundUser?.role as string) || 'admin');
         return { success: true };
       }
 
@@ -191,6 +210,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const account = registeredUsers.find((u: any) => u.email?.toLowerCase() === email.toLowerCase().trim());
         if (account) {
           setUser({ id: account.email, email: account.email } as any);
+          setRole((account.role as string) || 'customer');
+          localStorage.setItem('kaalvastr_user_role', (account.role as string) || 'customer');
           if (account.role === 'admin') {
             setIsAdmin(true);
             localStorage.setItem(LOCAL_ADMIN_KEY, 'true');
@@ -214,11 +235,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setSession(null);
     setIsAdmin(false);
+    setRole(null);
     localStorage.removeItem(LOCAL_ADMIN_KEY);
+    localStorage.removeItem('kaalvastr_user_role');
   };
 
+  const isStaff = role === 'admin' || role === 'staff';
+
   return (
-    <AuthContext.Provider value={{ user, session, isAdmin, loading, loginWithEmail, registerUser, verifyRegistrationOtp, logout }}>
+    <AuthContext.Provider value={{ user, session, isAdmin, isStaff, role, loading, loginWithEmail, registerUser, verifyRegistrationOtp, logout }}>
       {children}
     </AuthContext.Provider>
   );

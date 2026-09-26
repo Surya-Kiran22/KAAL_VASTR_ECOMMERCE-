@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import { X, Trash2, Plus, Minus, ShoppingBag, ArrowRight } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
 import { WhatsAppModal } from './WhatsAppModal';
 
 export const CartDrawer: React.FC = () => {
   const { cart, removeFromCart, updateQuantity, clearCart, subtotal, isCartOpen, setIsCartOpen } = useCart();
+  const { isStaff } = useAuth();
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
 
+  // Staff/admin accounts manage operations and do not shop
+  if (isStaff) return null;
   if (!isCartOpen) return null;
 
   return (

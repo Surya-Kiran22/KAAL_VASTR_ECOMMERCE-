@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ShoppingBag, Menu, X, ShieldCheck, Database } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
 
 export const Header: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
   const { totalItems, setIsCartOpen } = useCart();
+  const { isStaff } = useAuth();
 
   const navLinks = [
     { name: 'Shop', path: '/' },
@@ -85,20 +87,22 @@ export const Header: React.FC = () => {
             </Link>
           </nav>
 
-          {/* Cart Icon */}
+          {/* Cart Icon - hidden for staff/admin (they manage, not shop) */}
           <div className="flex items-center space-x-4">
-            <button
-              onClick={() => setIsCartOpen(true)}
-              className="relative p-2.5 text-zinc-300 hover:text-white bg-zinc-900/60 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-md transition-all group"
-              aria-label="Open Shopping Cart"
-            >
-              <ShoppingBag className="w-5 h-5 group-hover:scale-105 transition-transform" />
-              {totalItems > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-white text-black font-bold text-[11px] w-5 h-5 rounded-full flex items-center justify-center shadow-md">
-                  {totalItems}
-                </span>
-              )}
-            </button>
+            {!isStaff && (
+              <button
+                onClick={() => setIsCartOpen(true)}
+                className="relative p-2.5 text-zinc-300 hover:text-white bg-zinc-900/60 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-md transition-all group"
+                aria-label="Open Shopping Cart"
+              >
+                <ShoppingBag className="w-5 h-5 group-hover:scale-105 transition-transform" />
+                {totalItems > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-white text-black font-bold text-[11px] w-5 h-5 rounded-full flex items-center justify-center shadow-md">
+                    {totalItems}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -4,12 +4,14 @@ import { ArrowLeft, ShoppingBag, Check, ShieldCheck, Truck, RefreshCw, MessageSq
 import { Product } from '../types';
 import { fetchProductById } from '../lib/supabase';
 import { useCart } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
 import { useBusiness } from '../context/BusinessContext';
 
 export const ProductDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { addToCart } = useCart();
+  const { isStaff } = useAuth();
   const { settings } = useBusiness();
 
   const [product, setProduct] = useState<Product | null>(null);
@@ -247,28 +249,32 @@ export const ProductDetailPage: React.FC = () => {
             </div>
           )}
 
-          {/* Quantity Selector */}
+          {/* Quantity Selector - hidden for staff/admin */}
           <div className="space-y-3">
-            <span className="block text-xs font-semibold uppercase tracking-wider text-zinc-300">
-              Quantity
-            </span>
-            <div className="flex items-center w-max border border-zinc-700 rounded-md bg-zinc-900">
-              <button
-                disabled={quantity <= 1 || isOutOfStock}
-                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                className="px-3 py-2 text-zinc-400 hover:text-white disabled:opacity-30 transition-colors"
-              >
-                -
-              </button>
-              <span className="px-4 text-xs font-bold text-white">{quantity}</span>
-              <button
-                disabled={quantity >= product.stock || isOutOfStock}
-                onClick={() => setQuantity((q) => Math.min(product.stock, q + 1))}
-                className="px-3 py-2 text-zinc-400 hover:text-white disabled:opacity-30 transition-colors"
-              >
-                +
-              </button>
-            </div>
+            {!isStaff && (
+              <>
+                <span className="block text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                  Quantity
+                </span>
+                <div className="flex items-center w-max border border-zinc-700 rounded-md bg-zinc-900">
+                  <button
+                    disabled={quantity <= 1 || isOutOfStock}
+                    onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                    className="px-3 py-2 text-zinc-400 hover:text-white disabled:opacity-30 transition-colors"
+                  >
+                    -
+                  </button>
+                  <span className="px-4 text-xs font-bold text-white">{quantity}</span>
+                  <button
+                    disabled={quantity >= product.stock || isOutOfStock}
+                    onClick={() => setQuantity((q) => Math.min(product.stock, q + 1))}
+                    className="px-3 py-2 text-zinc-400 hover:text-white disabled:opacity-30 transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Toast Notification */}
@@ -279,16 +285,18 @@ export const ProductDetailPage: React.FC = () => {
             </div>
           )}
 
-          {/* Action Buttons */}
+          {/* Action Buttons - Add to Cart hidden for staff/admin */}
           <div className="pt-4 space-y-3">
-            <button
-              disabled={isOutOfStock}
-              onClick={handleAddToCart}
-              className="w-full py-4 bg-white text-black font-semibold text-xs tracking-widest uppercase rounded-md hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center space-x-2 shadow-lg"
-            >
-              <ShoppingBag className="w-4 h-4" />
-              <span>Add To Cart</span>
-            </button>
+            {!isStaff && (
+              <button
+                disabled={isOutOfStock}
+                onClick={handleAddToCart}
+                className="w-full py-4 bg-white text-black font-semibold text-xs tracking-widest uppercase rounded-md hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center space-x-2 shadow-lg"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>Add To Cart</span>
+              </button>
+            )}
 
             <button
               disabled={isOutOfStock}
