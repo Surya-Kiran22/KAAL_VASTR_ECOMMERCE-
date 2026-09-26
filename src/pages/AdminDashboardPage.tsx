@@ -27,6 +27,34 @@ export const AdminDashboardPage: React.FC = () => {
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [staffMsg, setStaffMsg] = useState<{ success: boolean; text: string } | null>(null);
 
+  // Staff Roster (directory) state
+  const [roster, setRoster] = useState<{ name: string; email: string; role: string; created_at?: string }[]>([]);
+
+  const loadRoster = () => {
+    try {
+      const raw = localStorage.getItem('kaalvastr_users_store');
+      if (!raw) { setRoster([]); return; }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) { setRoster([]); return; }
+      setRoster(
+        parsed
+          .filter((u: any) => (u?.role === 'staff' || u?.role === 'admin') && u?.email)
+          .map((u: any) => ({
+            name: (u.name as string) || (u.email as string),
+            email: u.email as string,
+            role: u.role as string,
+            created_at: u.created_at as string | undefined,
+          }))
+      );
+    } catch {
+      setRoster([]);
+    }
+  };
+
+  useEffect(() => {
+    loadRoster();
+  }, []);
+
   const handleCreateStaff = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreatingStaff(true);
@@ -41,6 +69,7 @@ export const AdminDashboardPage: React.FC = () => {
       });
 
       if (res.success) {
+        loadRoster();
         setStaffMsg({
           success: true,
           text: `Successfully created ${staffRole.toUpperCase()} account for ${staffName}! Verification email sent via Brevo SMTP (Port 2525).`,
@@ -922,7 +951,7 @@ export const AdminDashboardPage: React.FC = () => {
 
       {/* TAB 4: STAFF & TEAM ACCOUNT CREATION */}
       {activeTab === 'team' && (
-        <div className="max-w-2xl bg-[#141416] border border-[#27272A] rounded-lg p-6 sm:p-8 space-y-6">
+        <div className="max-w-4xl bg-[#141416] border border-[#27272A] rounded-lg p-6 sm:p-8 space-y-6">
           <div className="border-b border-zinc-800 pb-4">
             <h2 className="text-base font-bold tracking-wider uppercase text-white flex items-center space-x-2">
               <UserPlus className="w-5 h-5 text-emerald-400" />
@@ -931,6 +960,70 @@ export const AdminDashboardPage: React.FC = () => {
             <p className="text-xs text-zinc-400">
               Only authorized Admins can provision new Staff or Admin accounts. Verification is dispatched via Brevo SMTP (Port 2525).
             </p>
+          </div>
+
+          {/* Staff Roster Directory */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center space-x-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>Available Staff &amp; Admin Accounts</span>
+              </h3>
+              <span className="text-[10px] font-mono text-zinc-500">
+                {roster.length} provisioned
+              </span>
+            </div>
+
+            <div className="bg-[#0C0C0E] border border-zinc-800 rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#0C0C0E] border-b border-zinc-800 text-zinc-400 uppercase tracking-widest text-[10px]">
+                    <tr>
+                      <th className="px-4 py-3">Name</th>
+                      <th className="px-4 py-3">Email</th>
+                      <th className="px-4 py-3">Role</th>
+                      <th className="px-4 py-3">Provisioned</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/80 text-zinc-300">
+                    {roster.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-6 text-center text-zinc-500">
+                          No staff accounts provisioned on this device yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      roster.map((account) => (
+                        <tr key={account.email} className="hover:bg-zinc-900/60 transition-colors">
+                          <td className="px-4 py-3 font-semibold text-white">{account.name}</td>
+                          <td className="px-4 py-3 font-mono text-zinc-400">{account.email}</td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider border ${
+                                account.role === 'admin'
+                                  ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                                  : 'bg-sky-950 text-sky-400 border-sky-800'
+                              }`}
+                            >
+                              {account.role}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-zinc-400 text-[11px]">
+                            {account.created_at
+                              ? new Date(account.created_at).toLocaleDateString('en-IN', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                })
+                              : '—'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
 
           {staffMsg && (
