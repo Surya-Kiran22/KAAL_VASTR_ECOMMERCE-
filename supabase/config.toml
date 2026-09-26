@@ -28,7 +28,9 @@ schema_paths = []
 
 [db.seed]
 enabled = true
-sql_paths = ["./seed.sql"]
+# Seeding lives inside CLEAN_SCHEMA.sql (section 11) so a fresh install is a
+# single script. No separate seed file is required.
+sql_paths = []
 
 [realtime]
 enabled = true
